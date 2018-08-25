@@ -1,17 +1,8 @@
-package ydb
+package main
 
 import (
 	"sync"
 )
-
-type pendingConfirmation struct {
-	session      *session
-	confirmation uint64
-}
-
-func (c *pendingConfirmation) confirm() {
-	c.session.confirm(c.confirmation)
-}
 
 // serverConfirmation keeps track of confirmations created by the server.
 // serverConfirmation.next is attached to data sent from the server to a client (via some conn).
@@ -26,23 +17,29 @@ type serverConfirmation struct {
 	roomsChanged map[roomname]uint64
 }
 
+func (serverConfirmation *serverConfirmation) createConfirmation() uint64 {
+	conf := serverConfirmation.next
+	serverConfirmation.next++
+	return conf
+}
+
 // client confirmed that it received and persisted data.
-func (conf *serverConfirmation) clientConfirmed(confirmed uint64) {
-	if conf.nextClient <= confirmed {
-		conf.nextClient = confirmed + 1
+func (serverConfirmation *serverConfirmation) clientConfirmed(confirmed uint64) {
+	if serverConfirmation.nextClient <= confirmed {
+		serverConfirmation.nextClient = confirmed + 1
 		// recreate a new roomsChanged map to assure that memory does not grow
-		roomsChanged := conf.roomsChanged
-		conf.roomsChanged = make(map[roomname]uint64, 1)
+		roomsChanged := serverConfirmation.roomsChanged
+		serverConfirmation.roomsChanged = make(map[roomname]uint64, 1)
 		// re-insert all rooms that are not yet confirmed
 		for roomname, n := range roomsChanged {
 			if n > confirmed {
-				conf.roomsChanged[roomname] = n
+				serverConfirmation.roomsChanged[roomname] = n
 			}
 		}
 	}
 }
 
-// clientConfirmation keeps track of confirmations received from the client.
+// clientConfirmation keeps track of confirmation numbers received from the client.
 // ydb confirms messages when they are consumed and persisted on the disk.
 // The client will receive confirmations in-order. But since the process of persisting
 // data is asynchronous, it may happen that confirmations are created out-of-order.
@@ -58,25 +55,29 @@ type clientConfirmation struct {
 func (conf *clientConfirmation) serverConfirmed(confirmed uint64) (updated bool) {
 	if conf.next == confirmed {
 		conf.next = confirmed + 1
-		_, ok := conf.confs[conf.next]
-		for ok {
-			_, ok = conf.confs[conf.next]
-			conf.next++
+		if conf.confs != nil {
+			_, ok := conf.confs[conf.next]
+			for ok {
+				_, ok = conf.confs[conf.next]
+				conf.next++
+			}
 		}
 		if conf.next != confirmed+1 {
 			// conf updated based on confs
 			// conf.confs needs to be updated
 			oldConfs := conf.confs
-			conf.confs = make(map[uint64]struct{}, 0)
+			newConfs := make(map[uint64]struct{}, 0)
 			for n := range oldConfs {
-				conf.confs[n] = struct{}{}
+				newConfs[n] = struct{}{}
+			}
+			if len(newConfs) > 0 {
+				conf.confs = newConfs
 			}
 		}
 		return true
-	} else {
-		conf.confs[confirmed] = struct{}{}
-		return false
 	}
+	conf.confs[confirmed] = struct{}{}
+	return false
 }
 
 type session struct {
@@ -84,23 +85,35 @@ type session struct {
 	// currently active connection
 	conn conn
 	// set of all conns
-	conns              map[conn]struct{}
+	conns map[conn]struct{}
+	// client confirming messages to server
 	serverConfirmation serverConfirmation
+	// server confirming messages to client
 	clientConfirmation clientConfirmation
 }
 
-func (s *session) confirmToClient(confirmation uint64) {
+func newSession() *session {
+	return &session{
+		conns: make(map[conn]struct{}, 1),
+	}
+}
+
+func (s *session) sendConfirmation(confirmation uint64) {
 	s.mux.Lock()
 	if s.clientConfirmation.serverConfirmed(confirmation) {
-		confMessage := messageConfirmation(confirmation)
-		s.send(confMessage)
+		confMessage := createMessageConfirmation(confirmation)
+		s.conn.Write(confMessage)
 	}
 	s.mux.Unlock()
 }
 
-func (s *session) send(m message) {
-	s.conn.Write(m)
-
+func (s *session) sendUpdate(roomname roomname, data []byte) {
+	if len(data) > 0 {
+		s.mux.Lock()
+		m := createMessageUpdate(roomname, s.serverConfirmation.createConfirmation(), data)
+		s.conn.Write(m)
+		s.mux.Unlock()
+	}
 }
 
 func (s *session) add(conn conn) {

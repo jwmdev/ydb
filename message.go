@@ -1,4 +1,4 @@
-package ydb
+package main
 
 import (
 	"bytes"
@@ -20,24 +20,14 @@ type message interface {
 }
 
 func readMessage(m message, session *session) (err error) {
-	// read length of message
-	len, err := binary.ReadUvarint(m)
-	if err != nil {
-		return err
-	}
-	// prebuffering data to assure that all data exist, and we don't have to worry about err anymore
-	payload := make([]byte, len)
-	_, err = m.Read(payload)
-	if err != nil && err != io.EOF {
-		return err
-	}
-	buffered := bytes.NewReader(payload)
-	messageType, _ := binary.ReadUvarint(buffered)
+	messageType, _ := binary.ReadUvarint(m)
 	switch messageType {
 	case messageSub:
-		err = readSubMessage(buffered, session)
+		err = readSubMessage(m, session)
 	case messageUpdate:
-		err = readUpdateMessage(buffered, session)
+		err = readUpdateMessage(m, session)
+	case messageConfirmation:
+		err = readConfirmationMessage(m, session)
 	}
 	return err
 }
@@ -49,40 +39,75 @@ func readSubMessage(m message, session *session) error {
 	for i = 0; i < nSubs; i++ {
 		roomname, _ := readRoomname(m)
 		offset, _ := binary.ReadUvarint(m)
-		room := getRoom(roomname)
-		room.subscribe(session, offset)
+		subscribeRoom(roomname, session, offset)
 	}
-	session.confirm(confirmation)
+	session.sendConfirmation(confirmation)
+	return nil
 }
 
-func createMessageUpdate(roomname roomname, conf uint64, data []byte) io.Reader {
+func readConfirmationMessage(m message, session *session) (err error) {
+	conf, err := binary.ReadUvarint(m)
+	session.serverConfirmation.clientConfirmed(conf)
+	return
+}
+
+type subDefinition struct {
+	roomname roomname
+	offset   uint64
+}
+
+func createMessageSubscribe(conf uint64, subs ...subDefinition) []byte {
+	buf := &bytes.Buffer{}
+	writeUvarint(buf, messageSub)
+	writeUvarint(buf, conf)
+	writeUvarint(buf, uint64(len(subs)))
+	for _, sub := range subs {
+		writeRoomname(buf, sub.roomname)
+		writeUvarint(buf, sub.offset)
+	}
+	return buf.Bytes()
+}
+
+func createMessageUpdate(roomname roomname, conf uint64, data []byte) []byte {
 	buf := &bytes.Buffer{}
 	writeUvarint(buf, messageUpdate)
 	writeUvarint(buf, conf)
 	writeRoomname(buf, roomname)
-	buf.Write(data)
-	return buf
+	writePayload(buf, data)
+	return buf.Bytes()
+}
+
+func createMessageConfirmation(conf uint64) []byte {
+	buf := &bytes.Buffer{}
+	writeUvarint(buf, messageConfirmation)
+	writeUvarint(buf, conf)
+	return buf.Bytes()
 }
 
 func readUpdateMessage(m message, session *session) error {
 	confirmation, _ := binary.ReadUvarint(m)
 	roomname, _ := readRoomname(m)
-	room := getRoom(roomname)
+	bs, _ := readPayload(m)
 	// send the rest of message
-	// fswriter must confirm write to session
-	room.update(session, confirmation, m)
+	updateRoom(roomname, session, confirmation, bs)
+	return nil
 }
 
 func readString(m message) (string, error) {
-	len, _ := binary.ReadUvarint(m)
-	bs := make([]byte, len)
-	m.Read(bs)
-	return string(bs), nil
+	bs, err := readPayload(m)
+	return string(bs), err
 }
 
 func readRoomname(m message) (roomname, error) {
 	name, err := readString(m)
 	return roomname(name), err
+}
+
+func readPayload(m message) ([]byte, error) {
+	len, _ := binary.ReadUvarint(m)
+	bs := make([]byte, len)
+	m.Read(bs)
+	return bs, nil
 }
 
 func writeUvarint(buf io.Writer, n uint64) error {
@@ -93,8 +118,15 @@ func writeUvarint(buf io.Writer, n uint64) error {
 }
 
 func writeString(buf io.Writer, str string) error {
-	bs := []byte(str)
-	writeUvarint(buf, uint64(len(bs)))
-	buf.Write(bs)
+	return writePayload(buf, []byte(str))
+}
+
+func writeRoomname(buf io.Writer, roomname roomname) error {
+	return writeString(buf, string(roomname))
+}
+
+func writePayload(buf io.Writer, payload []byte) error {
+	writeUvarint(buf, uint64(len(payload)))
+	buf.Write(payload)
 	return nil
 }
