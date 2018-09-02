@@ -2,6 +2,8 @@ package main
 
 import (
 	"sync"
+
+	"github.com/gorilla/websocket"
 )
 
 // serverConfirmation keeps track of confirmations created by the server.
@@ -90,11 +92,13 @@ type session struct {
 	serverConfirmation serverConfirmation
 	// server confirming messages to client
 	clientConfirmation clientConfirmation
+	sessionid          uint64
 }
 
-func newSession() *session {
+func newSession(sessionid uint64) *session {
 	return &session{
-		conns: make(map[conn]struct{}, 1),
+		conns:     make(map[conn]struct{}, 1),
+		sessionid: sessionid,
 	}
 }
 
@@ -102,7 +106,8 @@ func (s *session) sendConfirmation(confirmation uint64) {
 	s.mux.Lock()
 	if s.clientConfirmation.serverConfirmed(confirmation) {
 		confMessage := createMessageConfirmation(confirmation)
-		s.conn.Write(confMessage)
+		pmessage, _ := websocket.NewPreparedMessage(websocket.BinaryMessage, confMessage)
+		s.conn.WriteMessage(confMessage, pmessage)
 	}
 	s.mux.Unlock()
 }
@@ -111,7 +116,8 @@ func (s *session) sendUpdate(roomname roomname, data []byte) {
 	if len(data) > 0 {
 		s.mux.Lock()
 		m := createMessageUpdate(roomname, s.serverConfirmation.createConfirmation(), data)
-		s.conn.Write(m)
+		pmessage, _ := websocket.NewPreparedMessage(websocket.BinaryMessage, m)
+		s.conn.WriteMessage(m, pmessage)
 		s.mux.Unlock()
 	}
 }
@@ -121,6 +127,20 @@ func (s *session) add(conn conn) {
 	if s.conn == nil {
 		s.conn = conn
 		// initialize conn here
+	}
+	s.mux.Unlock()
+}
+
+func (s *session) removeConn(conn conn) {
+	s.mux.Lock()
+	delete(s.conns, conn)
+	s.conn = nil
+	for conn := range s.conns {
+		s.conn = conn
+		break
+	}
+	if s.conn == nil {
+		ydb.removeSession(s.sessionid)
 	}
 	s.mux.Unlock()
 }

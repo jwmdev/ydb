@@ -1,6 +1,10 @@
 package main
 
+import (
+	"github.com/gorilla/websocket"
+)
+
 type conn interface {
 	// sends data to the client
-	Write(m []byte) (n int, err error)
+	WriteMessage(m []byte, pm *websocket.PreparedMessage)
 }

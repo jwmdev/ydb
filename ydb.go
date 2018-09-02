@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -45,14 +47,34 @@ func getRoom(name roomname) *room {
 	return r
 }
 
-func (ydb *Ydb) createSession() (sessionid uint64, s *session) {
+func (ydb *Ydb) getSession(sessionid uint64) *session {
 	ydb.sessionsMux.Lock()
-	sessionid = ydb.sessionidSeed.Uint64()
+	defer ydb.sessionsMux.Unlock()
+	return ydb.sessions[sessionid]
+}
+
+func (ydb *Ydb) createSession() (s *session) {
+	ydb.sessionsMux.Lock()
+	sessionid := ydb.sessionidSeed.Uint64()
 	if _, ok := ydb.sessions[sessionid]; ok {
 		panic("Generated the same session id twice! (this is a security vulnerability)")
 	}
-	s = newSession()
+	s = newSession(sessionid)
 	ydb.sessions[sessionid] = s
 	ydb.sessionsMux.Unlock()
-	return sessionid, s
+	return s
+}
+
+func (ydb *Ydb) removeSession(sessionid uint64) (err error) {
+	ydb.sessionsMux.Lock()
+	session, ok := ydb.sessions[sessionid]
+	if !ok {
+		err = fmt.Errorf("tried to close session %d, but session does not exist", sessionid)
+	} else if len(session.conns) > 0 || session.conn != nil {
+		err = errors.New("Cannot close this session because conns are still using it")
+	} else {
+		delete(ydb.sessions, sessionid)
+	}
+	ydb.sessionsMux.Unlock()
+	return
 }

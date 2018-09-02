@@ -2,10 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
-	"os"
-	"testing"
-	"time"
 )
 
 // testConn does not support reconnection
@@ -31,7 +27,7 @@ func newTestConn() *testConn {
 	return c
 }
 
-func runTestClient(conn *testConn) {
+func runTestConn(conn *testConn) {
 	for {
 		m := <-conn.incoming
 		b := bytes.NewBuffer(m)
@@ -39,21 +35,18 @@ func runTestClient(conn *testConn) {
 	}
 }
 
+/*
 func (conn *testConn) connect() {
 	if conn.sessionid == 0 {
-		sessionid, session := ydb.createSession()
-		conn.session = session
+		sessionid, session 	= ydb.createSession()
+		conn.session = sess	on
 		conn.sessionid = sessionid
 	}
 	go runTestClient(conn)
 	ydb.sessions[conn.sessionid].add(conn)
 }
 
-func (conn *testConn) subscribe(roomname roomname, offset uint64) {
-	m := createMessageSubscribe(conn.nextConfirmation, subDefinition{roomname, offset})
-	conn.nextConfirmation++
-	conn.incoming <- m
-}
+
 
 func (conn *testConn) updateRoomData(roomname roomname, data []byte) {
 	if len(data) > 0 {
@@ -64,25 +57,6 @@ func (conn *testConn) updateRoomData(roomname roomname, data []byte) {
 	}
 }
 
-func (conn *testConn) Write(m []byte) (n int, err error) {
-	buf := bytes.NewBuffer(m)
-	switch messageType, _ := buf.ReadByte(); messageType {
-	case messageUpdate:
-		confirmation, _ := binary.ReadUvarint(buf)
-		roomname, _ := readRoomname(buf)
-		bytes, _ := readPayload(buf)
-		conn.roomData[roomname] = append(conn.roomData[roomname], bytes...)
-		conn.incoming <- createMessageConfirmation(confirmation)
-	case messageConfirmation:
-		conf, _ := binary.ReadUvarint(buf)
-		if conf != conn.expectedConfirmation {
-			panic("Unexpected confirmation number!")
-		}
-		conn.expectedConfirmation++
-	}
-	return len(m), nil
-}
-
 func indexArrayItems(bs []byte) map[byte]uint64 {
 	m := make(map[byte]uint64)
 	for _, b := range bs {
@@ -91,9 +65,9 @@ func indexArrayItems(bs []byte) map[byte]uint64 {
 	return m
 }
 
-func compareClients(t *testing.T, c1, c2 *testConn) {
+func compareConns(t *testing.T, c1, c2 *testConn) {
 	if len(c1.roomData) != len(c2.roomData) {
-		t.Errorf("Clients roomData length does not match! %d != %d", len(c1.roomData), len(c2.roomData))
+		t.Errorf("Conns roomData length does not match! %d != %d", len(c1.roomData), len(c2.roomData))
 	}
 	for roomname, c1data := range c1.roomData {
 		c1index := indexArrayItems(c1data)
@@ -110,19 +84,13 @@ func compareClients(t *testing.T, c1, c2 *testConn) {
 	}
 }
 
-func (conn *testConn) waitForConfs() {
-	for conn.expectedConfirmation != conn.nextConfirmation {
-		time.Sleep(time.Millisecond * 10)
-	}
-}
-
-func waitForClientConfs(clients ...*testConn) {
+func waitForConnConfs(conns ...*testConn) {
 	for {
 		synced := true
-		for _, client := range clients {
-			if client.expectedConfirmation != client.nextConfirmation {
+		for _, conn := range conns {
+			if conn.expectedConfirmation != conn.nextConfirmation {
 				synced = false
-				client.waitForConfs()
+				conn.waitForConfs()
 			}
 		}
 		ydb.sessionsMux.Lock()
@@ -139,28 +107,7 @@ func waitForClientConfs(clients ...*testConn) {
 	}
 }
 
-func initTestConns(numberOfConns int, f func(conns []*testConn)) {
-	dir := "_ydb_conn_test"
-	os.RemoveAll(dir)
-	initYdb(dir)
-	conns := make([]*testConn, numberOfConns)
-	for i := 0; i < numberOfConns; i++ {
-		c := newTestConn()
-		c.connect()
-		c.subscribe("test", 0)
-		conns[i] = c
-	}
-	f(conns)
-	os.RemoveAll(dir)
-}
 
-func TestWriteRoomDataAfterSubscription(t *testing.T) {
-	initTestConns(2, func(conns []*testConn) {
-		conns[0].updateRoomData("test", []byte{7})
-		waitForClientConfs(conns...)
-		compareClients(t, conns[0], conns[1])
-		if len(conns[0].roomData["test"]) != 1 || conns[0].roomData["test"][0] != 7 {
-			t.Error("not expected result")
-		}
-	})
-}
+
+
+*/
