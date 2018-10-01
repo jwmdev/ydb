@@ -43,7 +43,8 @@ func cliParseStart(args []string) {
 		os.Exit(1)
 	}
 	fmt.Println(*dir)
-	// initYdb(dir)
+	initYdb(*dir)
+	setupWebsocketsListener(":9999")
 }
 
 func main() {

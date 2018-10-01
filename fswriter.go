@@ -44,7 +44,7 @@ func (fswriter *fswriter) startWriteTask() {
 					f.Seek(int64(sub.offset), 0)
 				}
 				data, _ := ioutil.ReadAll(f)
-				for _, pWrite := range room.pendingWrites {
+				for _, pWrite := range pendingWrites {
 					if pWrite.session != sub.session {
 						data = append(data, pWrite.data...)
 					}
@@ -85,8 +85,12 @@ func newFSWriter(dir string, fsAccessQueueLen uint, writeConcurrency int) (fswri
 	}
 
 	fswriter.queue = make(chan roomUpdate, fsAccessQueueLen)
-	for i := 0; i < writeConcurrency; i++ {
-		go fswriter.startWriteTask()
-	}
+	// TODO: start several write tasks
+	/*
+		for i := 0; i < writeConcurrency; i++ {wsConn
+			go fswriter.startWriteTask()
+		}
+	*/
+	go fswriter.startWriteTask()
 	return
 }

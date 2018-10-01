@@ -20,7 +20,10 @@ type message interface {
 }
 
 func readMessage(m message, session *session) (err error) {
-	messageType, _ := binary.ReadUvarint(m)
+	messageType, err := binary.ReadUvarint(m)
+	if err != nil {
+		return err
+	}
 	switch messageType {
 	case messageSub:
 		err = readSubMessage(m, session)

@@ -1,23 +1,51 @@
 package main
 
 import (
-	"os"
+	"sync"
 	"testing"
+	"time"
 )
 
 const testEndpoint = ":9999"
-
-/*
 const testroom = "testroom"
 
 func createTestClient() (client *client) {
 	client = newClient()
-	client.connect("localhost:9999")
-	client.subscribe(testroom)
+	client.Connect("ws://localhost:9999/ws")
+	client.Subscribe(subDefinition{testroom, 0})
 	return
 }
 
-func TestClientSubUpdate(t *testing.T) {
+func TestClientSubscribeUpdate(t *testing.T) {
+	createYdbTest(func() {
+		p := 247
+		runTest := func(seed int, wg *sync.WaitGroup) {
+			client := createTestClient()
+			client.UpdateRoom(testroom, []byte{byte(seed)})
+			client.WaitForConfs()
+			for {
+				roomdata := client.rooms[testroom]
+				if len(roomdata.data) == p {
+					break
+				}
+				time.Sleep(time.Millisecond * 100)
+			}
+			wg.Done()
+		}
+		wg := new(sync.WaitGroup)
+		wg.Add(int(p))
+		for i := 0; i < p; i++ {
+			go runTest(i, wg)
+		}
+		wg.Wait()
+	})
+}
+
+/*
+
+
+
+func TestClientSubscribeUpdate(t *testing.T) {
 	dir := "_ydb_conn_test"
 	os.RemoveAll(dir)
 	initYdb(dir)
@@ -32,7 +60,7 @@ func TestClientSubUpdate(t *testing.T) {
 	}
 	os.RemoveAll(dir)
 }
-*/
+
 
 func initTestClients(numberOfClients int, f func(clients []*client)) {
 	dir := "_ydb_conn_test"
@@ -60,3 +88,4 @@ func TestWriteRoomDataAfterSubscription(t *testing.T) {
 		}
 	})
 }
+*/

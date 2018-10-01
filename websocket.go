@@ -12,10 +12,10 @@ import (
 
 const (
 	// Time allowed to write a message to the peer.
-	writeWait = 10 * time.Second
+	writeWait = time.Hour * 60 // TODO: make this configurable and set it to a reasonable amount: 10 * time.Second
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	pongWait = time.Hour * 60 // TODO: make this configurable and set it to a reasonable amount: 60 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
@@ -27,6 +27,9 @@ const (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true // TODO: implement origin checking
+	},
 }
 
 type wsServer struct {
@@ -51,11 +54,6 @@ func (wsConn *wsConn) WriteMessage(m []byte, pm *websocket.PreparedMessage) {
 }
 
 func (wsConn *wsConn) readPump() {
-	defer func() {
-		wsConn.conn.Close()
-		// TODO: unregister conn from ydb
-		wsConn.session.removeConn(wsConn)
-	}()
 	wsConn.conn.SetReadLimit(maxMessageSize)
 	wsConn.conn.SetReadDeadline(time.Now().Add(pongWait))
 	wsConn.conn.SetPongHandler(func(string) error { wsConn.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
@@ -63,7 +61,7 @@ func (wsConn *wsConn) readPump() {
 		_, message, err := wsConn.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("error: %v", err)
+				log.Printf("ydb error: %v", err)
 			}
 			break
 		}
@@ -75,6 +73,9 @@ func (wsConn *wsConn) readPump() {
 			}
 		}
 	}
+	wsConn.conn.Close()
+	// TODO: unregister conn from ydb
+	wsConn.session.removeConn(wsConn)
 }
 
 func (wsConn *wsConn) writePump() {
@@ -82,6 +83,7 @@ func (wsConn *wsConn) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
+		wsConn.session.removeConn(wsConn)
 		conn.Close()
 	}()
 	for {
@@ -95,6 +97,7 @@ func (wsConn *wsConn) writePump() {
 			}
 			err := conn.WritePreparedMessage(message)
 			if err != nil {
+				fmt.Println("server error when writing prepared message to conn", err)
 				return
 			}
 		case <-ticker.C:
@@ -121,6 +124,7 @@ func setupWebsocketsListener(addr string) {
 			session = ydb.getSession(sessionid)
 		}
 		wsConn := newWsConn(session, conn)
+		session.add(wsConn)
 		go wsConn.readPump()
 		go wsConn.writePump()
 	})

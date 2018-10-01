@@ -3,14 +3,18 @@ package main
 import (
 	"math/rand"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func createYdbTest(f func()) {
 	dir := "_test"
 	os.RemoveAll(dir)
 	initYdb(dir)
+	go setupWebsocketsListener(":9999")
+	time.Sleep(time.Second)
 	f()
 	os.RemoveAll(dir)
 }
@@ -21,10 +25,10 @@ func TestGetRoom(t *testing.T) {
 		runTest := func(seed int, wg *sync.WaitGroup) {
 			src := rand.NewSource(int64(seed))
 			r := rand.New(src)
-			var numOfTests uint32 = 10000
-			var i uint32
+			var numOfTests uint64 = 10000
+			var i uint64
 			for ; i < numOfTests; i++ {
-				roomname := roomname(r.Uint32() % numOfTests)
+				roomname := roomname(strconv.FormatUint(r.Uint64()%numOfTests, 10))
 				getRoom(roomname)
 			}
 			wg.Done()

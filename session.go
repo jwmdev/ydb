@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -74,9 +75,14 @@ func (conf *clientConfirmation) serverConfirmed(confirmed uint64) (updated bool)
 			}
 			if len(newConfs) > 0 {
 				conf.confs = newConfs
+			} else {
+				conf.confs = nil
 			}
 		}
 		return true
+	}
+	if conf.confs == nil {
+		conf.confs = make(map[uint64]struct{}, 1)
 	}
 	conf.confs[confirmed] = struct{}{}
 	return false
@@ -87,7 +93,7 @@ type session struct {
 	// currently active connection
 	conn conn
 	// set of all conns
-	conns map[conn]struct{}
+	conns []conn
 	// client confirming messages to server
 	serverConfirmation serverConfirmation
 	// server confirming messages to client
@@ -97,7 +103,6 @@ type session struct {
 
 func newSession(sessionid uint64) *session {
 	return &session{
-		conns:     make(map[conn]struct{}, 1),
 		sessionid: sessionid,
 	}
 }
@@ -106,8 +111,14 @@ func (s *session) sendConfirmation(confirmation uint64) {
 	s.mux.Lock()
 	if s.clientConfirmation.serverConfirmed(confirmation) {
 		confMessage := createMessageConfirmation(confirmation)
-		pmessage, _ := websocket.NewPreparedMessage(websocket.BinaryMessage, confMessage)
-		s.conn.WriteMessage(confMessage, pmessage)
+		pmessage, err := websocket.NewPreparedMessage(websocket.BinaryMessage, confMessage)
+		if err != nil {
+			fmt.Printf("ydb error creating formatted message: %s", err)
+			return
+		}
+		if s.conn != nil {
+			s.conn.WriteMessage(confMessage, pmessage)
+		}
 	}
 	s.mux.Unlock()
 }
@@ -124,20 +135,27 @@ func (s *session) sendUpdate(roomname roomname, data []byte) {
 
 func (s *session) add(conn conn) {
 	s.mux.Lock()
+	s.conns = append(s.conns, conn)
 	if s.conn == nil {
 		s.conn = conn
-		// initialize conn here
 	}
 	s.mux.Unlock()
 }
 
-func (s *session) removeConn(conn conn) {
+func (s *session) removeConn(c conn) {
 	s.mux.Lock()
-	delete(s.conns, conn)
-	s.conn = nil
-	for conn := range s.conns {
-		s.conn = conn
-		break
+	var newConns []conn
+	for _, conn := range s.conns {
+		if c != conn {
+			newConns = append(newConns, conn)
+		}
+	}
+	if s.conn == c {
+		if len(s.conns) > 0 {
+			s.conn = s.conns[0]
+		} else {
+			s.conn = nil
+		}
 	}
 	if s.conn == nil {
 		ydb.removeSession(s.sessionid)
