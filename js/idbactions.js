@@ -16,8 +16,8 @@
  *   - In case the host doesn't confirm that it received this update, it is sent again on next sync
  * HU "host-unconfirmed" room, offset -> update
  *   - Updates from the host are written to this table
- *   - When host confirms that an unconfirmed update was persisted, the update is written to the Co table.
- *   - When client sync to host and the room session ids don't match, all host-unconfirmed messages are sent to host.
+ *   - When host confirms that an unconfirmed update was persisted, the update is written to the Co table
+ *   - When client sync to host and the room session ids don't match, all host-unconfirmed messages are sent to host
  * Co "confirmed":
  *   data:{room} -> update
  *     - this field holds confirmed room updates
@@ -33,32 +33,33 @@ import * as encoding from './encoding.js'
 import * as decoding from './decoding.js'
 import * as idb from './idb.js'
 import * as globals from './globals.js'
+import * as message from './message.js'
 
 /**
  * Get 'client-unconfirmed' store from transaction
  * @param {IDBTransaction} t
  * @return {IDBObjectStore}
  */
-const getStoreCU = t => idb.getStore(t, 'client-unconfirmed')
+const getStoreCU = t => idb.getStore(t, STORE_CU)
 /**
  * Get 'host-unconfirmed' store from transaction
  * @param {IDBTransaction} t
  * @return {IDBObjectStore}
  */
-const getStoreHU = t => idb.getStore(t, 'host-unconfirmed')
+const getStoreHU = t => idb.getStore(t, STORE_HU)
 /**
  * Get 'confirmed' store from transaction
  * @param {IDBTransaction} t
  * @return {IDBObjectStore}
  */
-const getStoreCo = t => idb.getStore(t, 'confirmed')
+const getStoreCo = t => idb.getStore(t, STORE_CO)
 
 /**
  * Get `unconfirmed-subscriptions` store from transaction
  * @param {IDBTransaction} t
  * @return {IDBObjectStore}
  */
-const getStoreUS = t => idb.getStore(t, 'unconfirmed-subscriptions')
+const getStoreUS = t => idb.getStore(t, STORE_US)
 
 /**
  * @param {string} room
@@ -88,13 +89,20 @@ const decodeHUKey = key => {
 const getCoMetaKey = room => 'meta:' + room
 const getCoDataKey = room => 'data:' + room
 
+const STORE_CU = 'client-unconfirmed'
+const STORE_US = 'unconfirmed-subscriptions'
+const STORE_CO = 'confirmed'
+const STORE_HU = 'host-unconfirmed'
+
 /**
+ * @param {string} dbNamespace
  * @return {Promise<IDBDatabase>}
  */
-export const openDB = () => idb.openDB('ydb-client', db => idb.createStores(db, [
-  ['client-unconfirmed', { autoIncrement: true }],
-  ['host-unconfirmed'],
-  ['confirmed']
+export const openDB = dbNamespace => idb.openDB(dbNamespace, db => idb.createStores(db, [
+  [STORE_CU, { autoIncrement: true }],
+  [STORE_HU],
+  [STORE_CO],
+  [STORE_US]
 ]))
 
 export const deleteDB = name => idb.deleteDB(name)
@@ -105,7 +113,7 @@ export const deleteDB = name => idb.deleteDB(name)
  * @param {IDBDatabase} db
  * @return {IDBTransaction}
  */
-export const createTransaction = db => db.transaction(['client-unconfirmed', 'host-unconfirmed', 'confirmed'], 'readwrite')
+export const createTransaction = db => db.transaction([STORE_CU, STORE_HU, STORE_CO, STORE_US], 'readwrite')
 
 /**
  * Write an update to the db after the client created it. This update is not yet received by the host.
@@ -121,6 +129,21 @@ export const writeClientUnconfirmed = (t, room, update) => {
   encoding.writeVarString(encoder, room)
   encoding.writeArrayBuffer(encoder, update)
   return idb.addAutoKey(getStoreCU(t), encoding.toBuffer(encoder))
+}
+
+/**
+ * Get all updates that are not yet confirmed by host.
+ * @param {IDBTransaction} t
+ * @return {Promise<ArrayBuffer>} All update messages as a single ArrayBuffer
+ */
+export const getUnconfirmedUpdates = t => {
+  const encoder = encoding.createEncoder()
+  return idb.iterate(getStoreCU(t), null, (value, clientConf) => {
+    const decoder = decoding.createDecoder(value)
+    const room = decoding.readVarString(decoder)
+    const update = decoding.readTail(decoder)
+    encoding.writeArrayBuffer(encoder, message.createUpdate(room, update, clientConf))
+  }).then(() => encoding.toBuffer(encoder))
 }
 
 /**
@@ -163,7 +186,7 @@ export const writeHostUnconfirmedByClient = (t, clientConf, offset) => idb.get(g
  * @param {ArrayBuffer} update
  * @return {Promise}
  */
-export const writeHostUnconfirmed = (t, room, offset, update) => idb.put(getStoreHU(t), update, encodeHUKey(room, offset))
+export const writeHostUnconfirmed = (t, room, offset, update) => idb.add(getStoreHU(t), update, encodeHUKey(room, offset))
 
 /**
  * The host confirms that it persisted updates up until (including) offset. updates may be moved from HU to Co.
@@ -174,7 +197,7 @@ export const writeHostUnconfirmed = (t, room, offset, update) => idb.put(getStor
  */
 export const writeConfirmedByHost = (t, room, offset) => {
   const co = getStoreCo(t)
-  return globals.pall([idb.get(co, getCoDataKey(room)), idb.get(co, getCoMetaKey(room))]).then(arr => {
+  return globals.pall([idb.get(co, getCoDataKey(room)), idb.get(co, getCoMetaKey(room))]).then(async arr => {
     const data = arr[0]
     const meta = arr[1]
     const metaSessionId = decodeMetaValue(meta).roomsid
@@ -222,7 +245,8 @@ export const getRoomMetas = t => {
   ).then(() => globals.presolve(result))
 }
 
-export const getRoomMeta = (t, room) => idb.get(getStoreCo(t), getCoMetaKey(room))
+export const getRoomMeta = (t, room) =>
+  idb.get(getStoreCo(t), getCoMetaKey(room))
 
 /**
  * Get all data from idb, including unconfirmed updates.
@@ -264,14 +288,13 @@ const encodeMetaValue = (roomsid, offset) => {
  * @param {string} room
  * @param {number} roomsessionid
  * @param {number} offset
- * @param {ArrayBuffer} data
  * @return {Promise<void>}
  */
-export const confirmSubscription = (t, room, roomsessionid, offset, data) => globals.pall([
+export const confirmSubscription = (t, room, roomsessionid, offset) => globals.pall([
   idb.put(getStoreCo(t), encodeMetaValue(roomsessionid, offset), getCoMetaKey(room)),
-  idb.put(getStoreCo(t), data, getCoDataKey(room))
+  idb.put(getStoreCo(t), globals.createArrayBufferFromArray([]), getCoDataKey(room))
 ]).then(() => idb.del(getStoreUS(t), room))
 
-export const writeUnconfirmedSubscription = (t, room) => idb.put(getStoreCo(t), true, room)
+export const writeUnconfirmedSubscription = (t, room) => idb.put(getStoreUS(t), true, room)
 
 export const getUnconfirmedSubscriptions = t => idb.getAllKeys(getStoreUS(t))

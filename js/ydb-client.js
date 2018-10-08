@@ -3,65 +3,90 @@ import * as idbactions from './idbactions.js'
 import * as globals from './globals.js'
 import * as message from './message.js'
 import * as bc from './broadcastchannel.js'
-import * as decoding from './decoding.js'
+import * as encoding from './encoding.js'
 import * as logging from './logging.js'
-
-const dbPromise = idbactions.openDB()
+import * as idb from './idb.js'
 
 export class YdbClient {
   constructor (url, db) {
-    const ws = new WebSocket(url)
-    this.ws = ws
+    this.url = url
+    this.ws = new WebSocket(url)
     this.rooms = new Map()
     this.db = db
-    ws.onmessage = event => {
-      const t = idbactions.createTransaction(db)
-      const decoder = decoding.createDecoder(event.data)
-      while (decoding.hasContent(decoder)) {
-        switch (decoding.readVarUint(decoder)) {
-          case message.MESSAGE_UPDATE: {
-            const room = decoding.readVarString(decoder)
-            const offset = decoding.readVarUint(decoder)
-            const update = decoding.readPayload(decoder)
-            idbactions.writeHostUnconfirmed(t, room, offset, update)
-            bc.publish(room, update)
-            break
-          }
-          case message.MESSAGE_SUB_CONF: {
-            const room = decoding.readVarString(decoder)
-            const offset = decoding.readVarUint(decoder)
-            const roomsid = decoding.readVarUint(decoder)
-            const data = decoding.readPayload(decoder)
-            idbactions.confirmSubscription(t, room, roomsid, offset, data)
-            break
-          }
-          case message.MESSAGE_CONFIRMATION: {
-            const room = decoding.readVarString(decoder)
-            const offset = decoding.readVarUint(decoder)
-            idbactions.writeConfirmedByHost(t, room, offset)
-            break
-          }
-          default:
-            logging.fail(`Unexpected message type`)
-        }
-      }
-    }
+    this.connected = false
+    initWS(this, this.ws)
   }
 }
 
 /**
+ * Initialize WebSocket connection. Try to reconnect on error/disconnect.
  * @param {YdbClient} ydb
- * @param {ArrayBuffer} m
+ * @param {WebSocket} ws
  */
-const readMessage = (ydb, m) => 
+const initWS = (ydb, ws) => {
+  ws.binaryType = 'arraybuffer'
+  ws.onclose = () => {
+    ydb.connected = false
+    logging.log('Disconnected from ydb. Reconnecting..')
+    ydb.ws = new WebSocket(ydb.url)
+    initWS(ydb, ws)
+  }
+  ws.onopen = () => {
+    const t = idbactions.createTransaction(ydb.db)
+    globals.pall([idbactions.getRoomMetas(t), idbactions.getUnconfirmedSubscriptions(t), idbactions.getUnconfirmedUpdates(t)]).then(([metas, us, unconfirmedUpdates]) => {
+      const subs = []
+      metas.forEach(meta => {
+        subs.push({
+          room: meta.room,
+          offset: meta.offset
+        })
+      })
+      us.forEach(room => {
+        subs.push({
+          room, offset: 0
+        })
+      })
+      ydb.connected = true
+      const encoder = encoding.createEncoder()
+      encoding.writeArrayBuffer(encoder, message.createSub(subs))
+      encoding.writeArrayBuffer(encoder, unconfirmedUpdates)
+      send(ydb, encoding.toBuffer(encoder))
+    })
+  }
+  ws.onmessage = event => message.readMessage(ydb, event.data)
+}
 
-export const getYdb = url => dbPromise.then(db => globals.presolve(new YdbClient(url, db)))
+// maps from dbNamespace to db
+const dbPromises = new Map()
+
+/**
+ * Factory function. Get a ydb instance that connects to url, and uses dbNamespace as indexeddb namespace.
+ * Create if it does not yet exist.
+ *
+ * @param {string} url
+ * @param {string} dbNamespace
+ * @return {Promise<YdbClient>}
+ */
+export const get = (url, dbNamespace = 'ydb') => {
+  if (!dbPromises.has(dbNamespace)) {
+    dbPromises.set(dbNamespace, idbactions.openDB(dbNamespace))
+  }
+  return dbPromises.get(dbNamespace).then(db => globals.presolve(new YdbClient(url, db)))
+}
+
+/**
+ * Remove a db namespace. Call this to remove any persisted data. Make sure to close active sessions.
+ * TODO: destroy active ydbClient sessions / throw if a session is still active
+ * @param {string} dbNamespace
+ * @return {Promise}
+ */
+export const clear = (dbNamespace = 'ydb') => idb.deleteDB(dbNamespace)
 
 /**
  * @param {YdbClient} ydb
  * @param {ArrayBuffer} m
  */
-export const send = (ydb, m) => ydb.ws.send(m)
+export const send = (ydb, m) => ydb.connected && ydb.ws.send(m)
 
 /**
  * @param {YdbClient} ydb
@@ -71,9 +96,11 @@ export const send = (ydb, m) => ydb.ws.send(m)
 export const update = (ydb, room, update) => {
   bc.publish(room, update)
   const t = idbactions.createTransaction(ydb.db)
-  return idbactions.writeClientUnconfirmed(t, room, update).then(clientConf =>
+  logging.log(`Write Unconfirmed Update. room "${room}", ${JSON.stringify(update)}`)
+  return idbactions.writeClientUnconfirmed(t, room, update).then(clientConf => {
+    logging.log(`Send Unconfirmed Update. connected ${ydb.connected} room "${room}", clientConf ${clientConf}, ${logging.arrayBufferToString(update)}`)
     send(ydb, message.createUpdate(room, update, clientConf))
-  )
+  })
 }
 
 export const subscribe = (ydb, room, f) => {
@@ -86,8 +113,10 @@ export const subscribe = (ydb, room, f) => {
   })
   idbactions.getRoomMeta(t, room).then(meta => {
     if (meta === undefined) {
+      logging.log(`Send Subscribe. room "${room}", offset ${0}`)
       // TODO: maybe set prelim meta value so we don't sub twice
-      send(ydb, message.createSub(ydb, [room]))
+      send(ydb, message.createSub([{ room, offset: 0 }]))
+      idbactions.writeUnconfirmedSubscription(t, room)
     }
   })
 }

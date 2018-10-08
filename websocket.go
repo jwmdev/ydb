@@ -12,16 +12,16 @@ import (
 
 const (
 	// Time allowed to write a message to the peer.
-	writeWait = time.Hour * 60 // TODO: make this configurable and set it to a reasonable amount: 10 * time.Second
+	writeWait = 5 * time.Second // TODO: make this configurable
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = time.Hour * 60 // TODO: make this configurable and set it to a reasonable amount: 60 * time.Second
+	pongWait = 60 * time.Second // TODO: make this configurable
 
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
 
 	// Maximum message size allowed from peer.
-	maxMessageSize = 512
+	maxMessageSize = 10024
 )
 
 var upgrader = websocket.Upgrader{
@@ -50,6 +50,10 @@ func newWsConn(session *session, conn *websocket.Conn) *wsConn {
 }
 
 func (wsConn *wsConn) WriteMessage(m []byte, pm *websocket.PreparedMessage) {
+	defer func() {
+		recover() // recover if channel is already closed
+	}()
+	debugMessageType("sending message to client..", m)
 	wsConn.send <- pm
 }
 
@@ -75,15 +79,16 @@ func (wsConn *wsConn) readPump() {
 	}
 	wsConn.conn.Close()
 	// TODO: unregister conn from ydb
-	wsConn.session.removeConn(wsConn)
 }
 
 func (wsConn *wsConn) writePump() {
 	conn := wsConn.conn
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
+		debug("ending write pump for ws conn")
 		ticker.Stop()
 		wsConn.session.removeConn(wsConn)
+		close(wsConn.send)
 		conn.Close()
 	}()
 	for {
@@ -110,7 +115,14 @@ func (wsConn *wsConn) writePump() {
 }
 
 func setupWebsocketsListener(addr string) {
+	// TODO: only set this if in testing mode!
+	http.HandleFunc("/clearAll", func(w http.ResponseWriter, r *http.Request) {
+		unsafeClearAllYdbContent()
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "OK")
+	})
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("new client..")
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			fmt.Printf("error: error upgrading client %s", err.Error())

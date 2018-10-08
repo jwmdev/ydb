@@ -7,7 +7,7 @@ const bc = new BroadcastChannel('ydb-client')
 const subs = new Map()
 
 bc.onmessage = event => {
-  const decoder = decoding.createDecoder(event)
+  const decoder = decoding.createDecoder(event.data)
   const room = decoding.readVarString(decoder)
   const update = decoding.readTail(decoder)
   const rsubs = subs.get(room)
@@ -38,4 +38,8 @@ export const publish = (room, update) => {
   encoding.writeVarString(encoder, room)
   encoding.writeArrayBuffer(encoder, update)
   bc.postMessage(encoding.toBuffer(encoder))
+  const rsubs = subs.get(room)
+  if (rsubs !== undefined) {
+    rsubs.forEach(f => f(update))
+  }
 }

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -22,10 +24,11 @@ type Ydb struct {
 }
 
 func initYdb(dir string) {
+	// remember to update unsafeClearAllYdbContent when updating here
 	ydb = Ydb{
 		rooms:         make(map[roomname]*room, 1000),
-		sessionidSeed: rand.New(rand.NewSource(time.Now().UnixNano())),
 		sessions:      make(map[uint64]*session),
+		sessionidSeed: rand.New(rand.NewSource(time.Now().UnixNano())),
 		fswriter:      newFSWriter(dir, 1000, 10), // TODO: have command line arguments for this
 	}
 }
@@ -77,4 +80,39 @@ func (ydb *Ydb) removeSession(sessionid uint64) (err error) {
 	}
 	ydb.sessionsMux.Unlock()
 	return
+}
+
+// TODO: refactor/remove..
+func removeFSWriteDirContent(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	d.Chmod(0777)
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	debug("read dir names")
+	for _, name := range names {
+		os.Chmod(filepath.Join(dir, name), 0777)
+		err = os.Remove(filepath.Join(dir, name))
+		debug("removed a file")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Clear all content in Ydb (files, sessions, rooms, ..).
+// Unsafe for production, only use for testing!
+// only works if dir is tmp
+func unsafeClearAllYdbContent() {
+	dir := ydb.fswriter.dir
+	debug("Clear Ydb content")
+	ydb.rooms = make(map[roomname]*room, 1000)
+	ydb.sessions = make(map[uint64]*session)
+	removeFSWriteDirContent(dir)
 }

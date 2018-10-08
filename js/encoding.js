@@ -10,7 +10,7 @@ const bits8 = 0b11111111
 class Encoder {
   constructor () {
     this.cpos = 0
-    this.cbuf = globals.createUint8ArrayByLen(1000)
+    this.cbuf = globals.createUint8ArrayFromLen(1000)
     this.bufs = []
   }
 }
@@ -35,14 +35,14 @@ export const length = encoder => {
  * @return {ArrayBuffer} The created ArrayBuffer.
  */
 export const toBuffer = encoder => {
-  const uint8arr = globals.createUint8ArrayByLen(length(encoder))
+  const uint8arr = globals.createUint8ArrayFromLen(length(encoder))
   let curPos = 0
   for (let i = 0; i < encoder.bufs.length; i++) {
     let d = encoder.bufs[i]
     uint8arr.set(d, curPos)
     curPos += d.length
   }
-  uint8arr.set(globals.createUint8ArrayByBuffer(encoder.cbuf.buffer, 0, encoder.cpos), curPos)
+  uint8arr.set(globals.createUint8ArrayFromBuffer(encoder.cbuf.buffer, 0, encoder.cpos), curPos)
   return uint8arr.buffer
 }
 
@@ -55,7 +55,7 @@ export const toBuffer = encoder => {
 export const write = (encoder, num) => {
   if (encoder.cpos === encoder.cbuf.length) {
     encoder.bufs.push(encoder.cbuf)
-    encoder.cbuf = globals.createUint8ArrayByLen(encoder.cbuf.length * 2)
+    encoder.cbuf = globals.createUint8ArrayFromLen(encoder.cbuf.length * 2)
     encoder.cpos = 0
   }
   encoder.cbuf[encoder.cpos++] = num
@@ -201,9 +201,9 @@ export const writeBinaryEncoder = (encoder, encoderToAppend) => writeArrayBuffer
 export const writeArrayBuffer = (encoder, arrayBuffer) => {
   const prevBufferLen = encoder.cbuf.length
   // TODO: Append to cbuf if possible
-  encoder.bufs.push(globals.createUint8ArrayByBuffer(encoder.cbuf.buffer, 0, encoder.cpos))
-  encoder.bufs.push(globals.createUint8ArrayByArrayBuffer(arrayBuffer))
-  encoder.cbuf = globals.createUint8ArrayByLen(prevBufferLen)
+  encoder.bufs.push(globals.createUint8ArrayFromBuffer(encoder.cbuf.buffer, 0, encoder.cpos))
+  encoder.bufs.push(globals.createUint8ArrayFromArrayBuffer(arrayBuffer))
+  encoder.cbuf = globals.createUint8ArrayFromLen(prevBufferLen)
   encoder.cpos = 0
 }
 

@@ -3,14 +3,19 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 )
 
 // message type constants
+// make sure to update message.js in ydb-client when updating these values..
 const (
-	messageUpdate       = 0
-	messageSub          = 1
-	messageConfirmation = 2
+	messageUpdate                  = 0
+	messageSub                     = 1
+	messageConfirmation            = 2
+	messageSubConf                 = 3
+	messageHostUnconfirmedByClient = 4
+	messageConfirmedByHost         = 5
 )
 
 // a message is structured as [length of payload, payload], where payload is [messageType, typePayload]
@@ -26,25 +31,35 @@ func readMessage(m message, session *session) (err error) {
 	}
 	switch messageType {
 	case messageSub:
+		debug("reading sub message")
 		err = readSubMessage(m, session)
 	case messageUpdate:
+		debug("reading update message")
 		err = readUpdateMessage(m, session)
 	case messageConfirmation:
+		debug("reading conf message")
 		err = readConfirmationMessage(m, session)
+	default:
+		debug(fmt.Sprintf("received unknown message type %d", messageType))
 	}
 	return err
 }
 
 func readSubMessage(m message, session *session) error {
-	confirmation, _ := binary.ReadUvarint(m)
+	subConfBuf := &bytes.Buffer{}
+	writeUvarint(subConfBuf, messageSubConf)
 	nSubs, _ := binary.ReadUvarint(m)
+	writeUvarint(subConfBuf, nSubs)
 	var i uint64
 	for i = 0; i < nSubs; i++ {
 		roomname, _ := readRoomname(m)
+		writeRoomname(subConfBuf, roomname)
 		offset, _ := binary.ReadUvarint(m)
-		subscribeRoom(roomname, session, offset)
+		writeUvarint(subConfBuf, offset)
+		writeUvarint(subConfBuf, 0) // room session id - TODO: implement correctly
+		subscribeRoom(roomname, session, uint32(offset))
 	}
-	session.sendConfirmation(confirmation)
+	session.send(subConfBuf.Bytes())
 	return nil
 }
 
@@ -71,12 +86,29 @@ func createMessageSubscribe(conf uint64, subs ...subDefinition) []byte {
 	return buf.Bytes()
 }
 
-func createMessageUpdate(roomname roomname, conf uint64, data []byte) []byte {
+//
+func createMessageUpdate(roomname roomname, offsetOrConf uint64, data []byte) []byte {
 	buf := &bytes.Buffer{}
 	writeUvarint(buf, messageUpdate)
-	writeUvarint(buf, conf)
+	writeUvarint(buf, offsetOrConf)
 	writeRoomname(buf, roomname)
 	writePayload(buf, data)
+	return buf.Bytes()
+}
+
+func createMessageHostUnconfirmedByClient(clientConf uint64, offset uint64) []byte {
+	buf := &bytes.Buffer{}
+	writeUvarint(buf, messageHostUnconfirmedByClient)
+	writeUvarint(buf, clientConf)
+	writeUvarint(buf, offset)
+	return buf.Bytes()
+}
+
+func createMessageConfirmedByHost(roomname roomname, offset uint64) []byte {
+	buf := &bytes.Buffer{}
+	writeUvarint(buf, messageConfirmedByHost)
+	writeRoomname(buf, roomname)
+	writeUvarint(buf, offset)
 	return buf.Bytes()
 }
 

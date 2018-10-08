@@ -29,6 +29,7 @@ func (fswriter *fswriter) startWriteTask() {
 		room := writeTask.room
 		roomname := writeTask.roomname
 		room.mux.Lock()
+		debug("fswriter: created room lock")
 		pendingWrites := room.pendingWrites
 		dataAvailable := false
 		if len(pendingWrites) > 0 {
@@ -38,42 +39,45 @@ func (fswriter *fswriter) startWriteTask() {
 			room.pendingWrites = nil
 		}
 		for _, sub := range room.pendingSubs {
-			if _, ok := room.subs[sub.session]; !ok {
+			if !room.hasSession(sub.session) {
 				f, _ := os.OpenFile(fmt.Sprintf("%s/%s", dir, string(roomname)), os.O_RDONLY|os.O_CREATE, stdPerms)
 				if sub.offset > 0 {
 					f.Seek(int64(sub.offset), 0)
 				}
 				data, _ := ioutil.ReadAll(f)
-				for _, pWrite := range pendingWrites {
-					if pWrite.session != sub.session {
-						data = append(data, pWrite.data...)
-					}
-				}
-				sub.session.sendUpdate(roomname, data)
-				room.subs[sub.session] = struct{}{}
+				data = append(data, pendingWrites...)
+				confirmedOffset := uint64(sub.offset) + uint64(len(data))
+				// TODO: combine sub and update here
+				sub.session.sendUpdate(roomname, data, confirmedOffset)
+				sub.session.sendConfirmedByHost(roomname, confirmedOffset)
+				room.subs = append(room.subs, sub.session)
 				f.Close()
 			}
 		}
 		room.pendingSubs = nil
 		room.registered = false
 		if dataAvailable {
-			var pendingData []byte
-			for _, pWrite := range pendingWrites {
-				pendingData = append(pendingData, pWrite.data...)
-				pWrite.session.sendConfirmation(pWrite.conf)
-			}
+			debug("fswriter: enter dataAvailable - write file")
 			f, err := os.OpenFile(fmt.Sprintf("%s/%s", dir, string(roomname)), os.O_APPEND|os.O_WRONLY|os.O_CREATE, stdPerms)
 			if err != nil {
 				panic(err)
 			}
+			debug("fswriter: opened file")
 
-			if _, err = f.Write(pendingData); err != nil {
+			if _, err = f.Write(pendingWrites); err != nil {
 				panic(err)
 			}
+			debug("fswriter: writing file")
 			f.Close()
+			debug("fswriter: closed file")
 			// confirm after we can assure that data has been written
+			for _, sub := range room.subs {
+				sub.sendConfirmedByHost(roomname, uint64(room.offset))
+			}
+			debug("fswriter: left dataAvailable - sent confirmedByHost")
 		}
 		room.mux.Unlock()
+		debug("fswriter: removed lock")
 	}
 }
 

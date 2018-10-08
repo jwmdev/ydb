@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -15,14 +16,18 @@ type pendingWrite struct {
 type room struct {
 	mux           sync.Mutex
 	registered    bool
-	pendingWrites []pendingWrite
-	subs          map[*session]struct{}
+	pendingWrites []byte
+	subs          []*session
 	pendingSubs   []pendingSub
+	roomsessionid uint32
+	offset        uint32
 }
 
 func newRoom() *room {
 	return &room{
-		subs: make(map[*session]struct{}),
+		subs:          nil,
+		roomsessionid: 0, // TODO: create random rsid
+		offset:        0, // TODO: all available rooms should be initialized with offset when Ydb initializes
 	}
 }
 
@@ -30,6 +35,24 @@ func modifyRoom(roomname roomname, f func(room *room) (modified bool)) {
 	room := getRoom(roomname)
 	var register bool
 	room.mux.Lock()
+	// try to clean up subs
+	needsCleanup := false
+	for _, s := range room.subs {
+		if s.conn == nil {
+			needsCleanup = true
+			break
+		}
+	}
+	if needsCleanup {
+		var newSubs []*session
+		for _, s := range room.subs {
+			if s.conn != nil {
+				newSubs = append(newSubs, s)
+			}
+		}
+		room.subs = newSubs
+	}
+
 	modified := f(room)
 	if room.registered == false && modified {
 		register = true
@@ -43,29 +66,49 @@ func modifyRoom(roomname roomname, f func(room *room) (modified bool)) {
 
 // update in-memory buffer of writable data. Registers in fswriter if new data is available.
 // Writes to buffer until fswriter owns the buffer.
-func updateRoom(roomname roomname, session *session, conf uint64, bs []byte) {
+func updateRoom(roomname roomname, session *session, clientConf uint64, bs []byte) {
+	debug("trying to update room")
 	modifyRoom(roomname, func(room *room) bool {
-		room.pendingWrites = append(room.pendingWrites, pendingWrite{bs, session, conf})
-		for s := range room.subs {
+		debug("updating room")
+		room.pendingWrites = append(room.pendingWrites, bs...)
+		room.offset += uint32(len(bs))
+		debug(fmt.Sprintf("updating room .. number of subs: %d", len(room.subs)))
+		for _, s := range room.subs {
 			if s != session {
-				s.sendUpdate(roomname, bs)
+				s.sendUpdate(roomname, bs, uint64(room.offset))
 			}
 		}
+		debug("updating room .. wrote update to all sessions but sender")
+		session.sendHostUnconfirmedByClient(clientConf, uint64(room.offset))
+		debug("updating room .. sent conf to client")
 		return true
 	})
+	debug("done updating room")
 }
 
 type pendingSub struct {
 	session *session
-	offset  uint64
+	offset  uint32
 }
 
-func subscribeRoom(roomname roomname, session *session, offset uint64) {
-	modifyRoom(roomname, func(room *room) bool {
-		_, ok := room.subs[session]
-		if !ok {
-			room.pendingSubs = append(room.pendingSubs, pendingSub{session, offset})
+func (room *room) hasSession(session *session) bool {
+	for _, s := range room.subs {
+		if s == session {
+			return true
 		}
-		return !ok // whether room data needs to access fswriter
+	}
+	return false
+}
+
+func subscribeRoom(roomname roomname, session *session, offset uint32) {
+	debug("try modify room")
+	modifyRoom(roomname, func(room *room) bool {
+		debug("modifying room..")
+		if !room.hasSession(session) {
+			room.pendingSubs = append(room.pendingSubs, pendingSub{session, offset})
+			return true
+		}
+		return false // whether room data needs to access fswriter
 	})
+	debug("modified room")
 }

@@ -47,20 +47,23 @@ export const createStores = (db, definitions) => definitions.forEach(d =>
  * @param {String | number | ArrayBuffer | Date | Array } key
  * @return {Promise<ArrayBuffer>}
  */
-export const get = (store, key) => rtop(store.get(key))
+export const get = (store, key) =>
+  rtop(store.get(key))
 
 /**
  * @param {IDBObjectStore} store
  * @param {String | number | ArrayBuffer | Date | IDBKeyRange | Array } key
  */
-export const del = (store, key) => rtop(store.delete(key))
+export const del = (store, key) =>
+  rtop(store.delete(key))
 
 /**
  * @param {IDBObjectStore} store
  * @param {String | number | ArrayBuffer | Date | boolean} item
  * @param {String | number | ArrayBuffer | Date | Array} [key]
  */
-export const put = (store, item, key) => rtop(store.put(item, key))
+export const put = (store, item, key) =>
+  rtop(store.put(item, key))
 
 /**
  * @param {IDBObjectStore} store
@@ -68,31 +71,35 @@ export const put = (store, item, key) => rtop(store.put(item, key))
  * @param {String | number | ArrayBuffer | Date | Array}  [key]
  * @return {Promise<ArrayBuffer>}
  */
-export const add = (store, item, key) => rtop(store.add(item, key))
+export const add = (store, item, key) =>
+  rtop(store.add(item, key))
 
 /**
  * @param {IDBObjectStore} store
  * @param {String | number | ArrayBuffer | Date}  item
  * @return {Promise<number>}
  */
-export const addAutoKey = (store, item) => rtop(store.add(item))
+export const addAutoKey = (store, item) =>
+  rtop(store.add(item))
 
 /**
  * @param {IDBObjectStore} store
  * @param {IDBKeyRange} [range]
  */
-export const getAll = (store, range) => rtop(store.getAll(range))
+export const getAll = (store, range) =>
+  rtop(store.getAll(range))
 
 /**
  * @param {IDBObjectStore} store
  * @param {IDBKeyRange} [range]
  */
-export const getAllKeys = (store, range) => rtop(store.getAllKeys(range))
+export const getAllKeys = (store, range) =>
+  rtop(store.getAllKeys(range))
 
 /**
  * Iterate on keys and values
  * @param {IDBObjectStore} store
- * @param {IDBKeyRange} keyrange
+ * @param {IDBKeyRange?} keyrange
  * @param {function(any, any)} f Return true in order to continue the cursor
  */
 export const iterate = (store, keyrange, f) => globals.createPromise((resolve, reject) => {

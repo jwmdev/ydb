@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -107,7 +106,9 @@ func newSession(sessionid uint64) *session {
 	}
 }
 
-func (s *session) sendConfirmation(confirmation uint64) {
+func (s *session) sendConfirmedByHost(roomname roomname, offset uint64) {
+	s.send(createMessageConfirmedByHost(roomname, offset))
+	/* TODO: use the following for UnconfirmedHostByClient
 	s.mux.Lock()
 	if s.clientConfirmation.serverConfirmed(confirmation) {
 		confMessage := createMessageConfirmation(confirmation)
@@ -121,16 +122,26 @@ func (s *session) sendConfirmation(confirmation uint64) {
 		}
 	}
 	s.mux.Unlock()
+	*/
 }
 
-func (s *session) sendUpdate(roomname roomname, data []byte) {
-	if len(data) > 0 {
-		s.mux.Lock()
-		m := createMessageUpdate(roomname, s.serverConfirmation.createConfirmation(), data)
-		pmessage, _ := websocket.NewPreparedMessage(websocket.BinaryMessage, m)
-		s.conn.WriteMessage(m, pmessage)
-		s.mux.Unlock()
+func (s *session) send(bs []byte) {
+	s.mux.Lock()
+	if s.conn != nil {
+		pmessage, _ := websocket.NewPreparedMessage(websocket.BinaryMessage, bs)
+		s.conn.WriteMessage(bs, pmessage)
 	}
+	s.mux.Unlock()
+}
+
+func (s *session) sendUpdate(roomname roomname, data []byte, offset uint64) {
+	if len(data) > 0 {
+		s.send(createMessageUpdate(roomname, offset, data))
+	}
+}
+
+func (s *session) sendHostUnconfirmedByClient(clientConf uint64, offset uint64) {
+	s.send(createMessageHostUnconfirmedByClient(clientConf, offset))
 }
 
 func (s *session) add(conn conn) {
@@ -150,8 +161,9 @@ func (s *session) removeConn(c conn) {
 			newConns = append(newConns, conn)
 		}
 	}
+	s.conns = newConns
 	if s.conn == c {
-		if len(s.conns) > 0 {
+		if s.conns != nil { // conns is not empty
 			s.conn = s.conns[0]
 		} else {
 			s.conn = nil

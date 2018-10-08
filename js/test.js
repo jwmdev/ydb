@@ -1,9 +1,14 @@
 import * as logging from './logging.js'
 
-export const run = (name, f) => {
-  console.info(name)
+export const run = async (name, f) => {
+  console.log(`%cStart:%c   ${name}`, 'color:blue;', '')
   const start = new Date()
-  f(name)
+  try {
+    await f(name)
+  } catch (e) {
+    logging.print(`%cFailure:%c ${name} in %c${new Date().getTime() - start.getTime()}ms`, 'color:red;font-weight:bold', '', 'color:grey')
+    throw e
+  }
   logging.print(`%cSuccess:%c ${name} in %c${new Date().getTime() - start.getTime()}ms`, 'color:green;font-weight:bold', '', 'color:grey')
 }
 
