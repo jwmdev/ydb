@@ -101,14 +101,17 @@ func (room *room) hasSession(session *session) bool {
 }
 
 func subscribeRoom(roomname roomname, session *session, offset uint32) {
-	debug("try modify room")
 	modifyRoom(roomname, func(room *room) bool {
-		debug("modifying room..")
 		if !room.hasSession(session) {
-			room.pendingSubs = append(room.pendingSubs, pendingSub{session, offset})
-			return true
+			if room.offset != offset {
+				room.pendingSubs = append(room.pendingSubs, pendingSub{session, offset})
+				return true
+			} else {
+				room.subs = append(room.subs, session)
+				// session.sendConfirmedByHost(roomname, uint64(offset))
+				return false
+			}
 		}
 		return false // whether room data needs to access fswriter
 	})
-	debug("modified room")
 }

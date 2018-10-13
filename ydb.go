@@ -43,9 +43,15 @@ func getRoom(name roomname) *room {
 		r = ydb.rooms[name]
 		if r == nil {
 			r = newRoom()
+			ydb.rooms[name] = r
+			r.mux.Lock()
+			ydb.roomsMux.Unlock()
+			// read room offset..
+			r.offset = ydb.fswriter.readRoomSize(name)
+			r.mux.Unlock()
+		} else {
+			ydb.roomsMux.Unlock()
 		}
-		ydb.rooms[name] = r
-		ydb.roomsMux.Unlock()
 	}
 	return r
 }

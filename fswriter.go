@@ -18,6 +18,18 @@ type fswriter struct {
 	dir   string
 }
 
+func (fswriter *fswriter) readRoomSize(roomname roomname) uint32 {
+	fi, err := os.Stat(fmt.Sprintf("%s/%s", fswriter.dir, string(roomname)))
+	switch err.(type) {
+	case nil:
+	case *os.PathError:
+		return 0
+	default:
+		panic("unexpected error while reading file stats")
+	}
+	return uint32(fi.Size())
+}
+
 func (fswriter *fswriter) registerRoomUpdate(room *room, roomname roomname) {
 	fswriter.queue <- roomUpdate{room, roomname}
 }

@@ -12,16 +12,16 @@ import (
 
 const (
 	// Time allowed to write a message to the peer.
-	writeWait = 5 * time.Second // TODO: make this configurable
+	writeWait = 50 * time.Second // TODO: make this configurable
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second // TODO: make this configurable
+	pongWait = 50 * time.Second // TODO: make this configurable
 
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
 
 	// Maximum message size allowed from peer.
-	maxMessageSize = 10024
+	maxMessageSize = 10000000
 )
 
 var upgrader = websocket.Upgrader{
@@ -60,7 +60,10 @@ func (wsConn *wsConn) WriteMessage(m []byte, pm *websocket.PreparedMessage) {
 func (wsConn *wsConn) readPump() {
 	wsConn.conn.SetReadLimit(maxMessageSize)
 	wsConn.conn.SetReadDeadline(time.Now().Add(pongWait))
-	wsConn.conn.SetPongHandler(func(string) error { wsConn.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	wsConn.conn.SetPongHandler(func(string) error {
+		wsConn.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 	for {
 		_, message, err := wsConn.conn.ReadMessage()
 		if err != nil {
@@ -78,6 +81,7 @@ func (wsConn *wsConn) readPump() {
 		}
 	}
 	wsConn.conn.Close()
+	debug("ending read pump for ws conn")
 	// TODO: unregister conn from ydb
 }
 
