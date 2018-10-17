@@ -26,7 +26,7 @@ type room struct {
 func newRoom() *room {
 	return &room{
 		subs:          nil,
-		roomsessionid: 0, // TODO: create random rsid
+		roomsessionid: ydb.genUint32(),
 		offset:        0, // TODO: all available rooms should be initialized with offset when Ydb initializes
 	}
 }
@@ -100,17 +100,15 @@ func (room *room) hasSession(session *session) bool {
 	return false
 }
 
-func subscribeRoom(roomname roomname, session *session, offset uint32) {
+func subscribeRoom(roomname roomname, session *session, roomsessionid uint32, offset uint32) {
 	modifyRoom(roomname, func(room *room) bool {
 		if !room.hasSession(session) {
 			if room.offset != offset {
 				room.pendingSubs = append(room.pendingSubs, pendingSub{session, offset})
 				return true
-			} else {
-				room.subs = append(room.subs, session)
-				// session.sendConfirmedByHost(roomname, uint64(offset))
-				return false
 			}
+			room.subs = append(room.subs, session)
+			// session.sendConfirmedByHost(roomname, uint64(offset))
 		}
 		return false // whether room data needs to access fswriter
 	})

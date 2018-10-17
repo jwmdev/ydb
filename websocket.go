@@ -36,16 +36,18 @@ type wsServer struct {
 }
 
 type wsConn struct {
-	conn    *websocket.Conn
-	session *session
-	send    chan *websocket.PreparedMessage
+	conn           *websocket.Conn
+	session        *session
+	send           chan *websocket.PreparedMessage
+	closeWritePump chan struct{}
 }
 
 func newWsConn(session *session, conn *websocket.Conn) *wsConn {
 	return &wsConn{
-		conn:    conn,
-		session: session,
-		send:    make(chan *websocket.PreparedMessage, 5),
+		conn:           conn,
+		session:        session,
+		send:           make(chan *websocket.PreparedMessage, 5),
+		closeWritePump: make(chan struct{}, 0),
 	}
 }
 
@@ -80,6 +82,7 @@ func (wsConn *wsConn) readPump() {
 			}
 		}
 	}
+	close(wsConn.closeWritePump)
 	wsConn.conn.Close()
 	debug("ending read pump for ws conn")
 	// TODO: unregister conn from ydb
@@ -97,6 +100,8 @@ func (wsConn *wsConn) writePump() {
 	}()
 	for {
 		select {
+		case <-wsConn.closeWritePump:
+			return
 		case message, ok := <-wsConn.send:
 			conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {

@@ -12,7 +12,7 @@ const testroom = "testroom"
 func createTestClient() (client *client) {
 	client = newClient()
 	client.Connect("ws://localhost:9999/ws")
-	client.Subscribe(subDefinition{testroom, 0})
+	client.Subscribe(subDefinition{testroom, 0, 0})
 	return
 }
 

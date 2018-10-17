@@ -12,7 +12,8 @@
             "program": "${workspaceRoot}",
             "args": [
                 "start",
-                "-dir", "_ydbData"
+                "-dir",
+                "_ydbData"
             ]
         },
         {

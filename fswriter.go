@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"time"
 )
 
 const stdPerms = 0600
@@ -40,6 +41,7 @@ func (fswriter *fswriter) startWriteTask() {
 		writeTask := <-fswriter.queue
 		room := writeTask.room
 		roomname := writeTask.roomname
+		time.Sleep(time.Millisecond * 800)
 		room.mux.Lock()
 		debug("fswriter: created room lock")
 		pendingWrites := room.pendingWrites

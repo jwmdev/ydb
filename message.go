@@ -54,10 +54,21 @@ func readSubMessage(m message, session *session) error {
 	for i = 0; i < nSubs; i++ {
 		roomname, _ := readRoomname(m)
 		writeRoomname(subConfBuf, roomname)
-		offset, _ := binary.ReadUvarint(m)
-		writeUvarint(subConfBuf, offset)
-		writeUvarint(subConfBuf, 0) // room session id - TODO: implement correctly
-		subscribeRoom(roomname, session, uint32(offset))
+		clientOffset, _ := binary.ReadUvarint(m)
+		clientRsid, _ := binary.ReadUvarint(m)
+		room := getRoom(roomname)
+		room.mux.Lock()
+		roomRsid := uint64(room.roomsessionid)
+		roomOffset := uint64(room.offset)
+		room.mux.Unlock()
+		if roomRsid != clientRsid || roomOffset < clientOffset {
+			// in case of mismatch suggest the client to resync. TODO: Init Yjs sync here
+			clientOffset = 0
+			clientRsid = roomRsid
+		}
+		writeUvarint(subConfBuf, clientOffset)
+		writeUvarint(subConfBuf, clientRsid)
+		subscribeRoom(roomname, session, uint32(clientRsid), uint32(clientOffset))
 	}
 	session.send(subConfBuf.Bytes())
 	return nil
@@ -72,6 +83,7 @@ func readConfirmationMessage(m message, session *session) (err error) {
 type subDefinition struct {
 	roomname roomname
 	offset   uint64
+	rsid     uint64
 }
 
 func createMessageSubscribe(conf uint64, subs ...subDefinition) []byte {
@@ -82,6 +94,7 @@ func createMessageSubscribe(conf uint64, subs ...subDefinition) []byte {
 	for _, sub := range subs {
 		writeRoomname(buf, sub.roomname)
 		writeUvarint(buf, sub.offset)
+		writeUvarint(buf, sub.rsid)
 	}
 	return buf.Bytes()
 }
